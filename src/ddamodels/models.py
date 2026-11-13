@@ -124,3 +124,65 @@ def gru_predict(model, history: np.ndarray, context: np.ndarray, candidate: np.n
                        torch.as_tensor(context, dtype=torch.float32),
                        torch.as_tensor(candidate, dtype=torch.float32))
         return torch.sigmoid(logits).cpu().numpy()
+
+
+if nn is not None:
+    class TokenizedFiLMGRU(nn.Module):
+        """Masked canonical telemetry encoder with FiLM difficulty conditioning."""
+        def __init__(self, feature_count: int, context_count: int, difficulty_count: int = 5,
+                     latent_size: int = 64, token_size: int = 32, hidden_size: int = 64):
+            super().__init__()
+            self.feature_embedding = nn.Embedding(feature_count, token_size)
+            self.value_net = nn.Sequential(nn.Linear(2, token_size), nn.ReLU())
+            self.token_net = nn.Sequential(nn.Linear(token_size, latent_size), nn.ReLU())
+            self.temporal = nn.GRU(latent_size, hidden_size, batch_first=True)
+            self.context_net = nn.Sequential(nn.Linear(context_count, 16), nn.ReLU())
+            self.difficulty_net = nn.Sequential(nn.Linear(difficulty_count, 32), nn.ReLU())
+            self.gamma = nn.Linear(32, hidden_size)
+            self.beta = nn.Linear(32, hidden_size)
+            self.head = nn.Sequential(nn.Linear(hidden_size + 16 + 32, 32), nn.ReLU(), nn.Linear(32, 1))
+
+        def forward(self, values, mask, context, difficulty, feature_ids=None):
+            b, t, f = values.shape
+            if feature_ids is None:
+                feature_ids = torch.arange(f, device=values.device)
+            emb = self.feature_embedding(feature_ids).view(1, 1, f, -1).expand(b, t, f, -1)
+            vm = torch.stack([values, mask], dim=-1)
+            tokens = self.value_net(vm) + emb
+            tokens = self.token_net(tokens)
+            denom = mask.sum(dim=-1, keepdim=True).clamp_min(1.0)
+            z = (tokens * mask.unsqueeze(-1)).sum(dim=-2) / denom
+            _, h = self.temporal(z)
+            h = h[-1]
+            de = self.difficulty_net(difficulty)
+            h = self.gamma(de) * h + self.beta(de)
+            out = torch.cat([h, self.context_net(context), de], dim=-1)
+            return self.head(out).squeeze(-1)
+else:
+    TokenizedFiLMGRU = None
+
+
+def train_tokenized_film_gru(values: np.ndarray, masks: np.ndarray, context: np.ndarray,
+                             difficulty: np.ndarray, y: np.ndarray, epochs: int = 50,
+                             batch_size: int = 32, lr: float = 1e-3, seed: int = 42) -> GRUTrainingResult:
+    if torch is None or TokenizedFiLMGRU is None:
+        raise RuntimeError("PyTorch is required for TokenizedFiLMGRU training. Install requirements.txt")
+    torch.manual_seed(seed)
+    model = TokenizedFiLMGRU(values.shape[-1], context.shape[-1], difficulty.shape[-1])
+    opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    loss_fn = nn.BCEWithLogitsLoss()
+    tensors = [torch.as_tensor(a, dtype=torch.float32) for a in (values, masks, context, difficulty, y)]
+    order = np.arange(len(y)); records = []
+    for epoch in range(epochs):
+        np.random.default_rng(seed + epoch).shuffle(order)
+        losses = []
+        model.train()
+        for start in range(0, len(order), batch_size):
+            ix = order[start:start + batch_size]
+            opt.zero_grad()
+            logits = model(tensors[0][ix], tensors[1][ix], tensors[2][ix], tensors[3][ix])
+            loss = loss_fn(logits, tensors[4][ix])
+            loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step()
+            losses.append(float(loss.detach()))
+        records.append({"epoch": epoch + 1, "train_loss": float(np.mean(losses))})
+    return GRUTrainingResult(model, records)

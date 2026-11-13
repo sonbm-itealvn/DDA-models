@@ -1,6 +1,6 @@
 # DDA-models
 
-Mã nguồn huấn luyện mô hình Dynamic Difficulty Adjustment (DDA) cho game tower defense dựa trên telemetry.
+Mã nguồn huấn luyện và đánh giá mô hình Dynamic Difficulty Adjustment (DDA) từ telemetry. Repository có baseline cho Tower Defense và một lớp mở rộng **canonical telemetry + feature mask + Tokenized FiLM GRU** để nghiên cứu khả năng khái quát sang map/patch/game khác.
 
 ## Mục tiêu
 
@@ -19,6 +19,11 @@ Repository gồm:
 - Candidate-Conditioned GRU nếu cài PyTorch;
 - calibration, metrics và model manifest;
 - export artifact phục vụ Unity/ONNX ở bước tiếp theo.
+- canonical semantic adapter cho progress, vitality, capability và human cognitive-motor signals;
+- session-relative normalization, online temperature calibration và uncertainty-aware safe controller;
+- robustness evaluation bằng availability mask/feature dropout.
+
+Phạm vi được cam kết là **generalizable runtime contract**, không phải một model zero-shot dùng nguyên xi cho mọi game. Game mới vẫn cần adapter semantic và kiểm thử playability.
 
 ## Cài đặt
 
@@ -40,7 +45,7 @@ Môi trường đầy đủ để train baseline + GRU:
 pip install -r requirements.txt
 ```
 
-## Dataset đầu vào cho training
+## Dataset v1 đầu vào cho training
 
 Training dataset dạng CSV/Parquet cần có:
 
@@ -57,6 +62,29 @@ segment_success     # 0/1
 ```
 
 Nếu `candidate_difficulty` là số nguyên, pipeline tự chuyển thành difficulty vector từ `configs/difficulty_profiles.json`. Có thể cung cấp `difficulty_vector_json` nếu game dùng profile tùy biến.
+
+## Dataset v2 canonical/adaptive
+
+Model `TokenizedFiLMGRU` nhận dataset có:
+
+```text
+values_json              # [T, 19] canonical values
+mask_json                # [T, 19], 1=available, 0=missing
+context_json             # vector context
+difficulty_vector_json   # [relative_step, pressure_delta, forgiveness_delta, resource_delta, empirical_prior]
+segment_success          # 0/1
+```
+
+Train:
+
+```bash
+python scripts/train_adaptive.py \
+  --dataset data/features/canonical_windows_v1.parquet \
+  --output-dir artifacts/adaptive_v1 \
+  --epochs 50
+```
+
+Missing feature không được coi là giá trị 0 thực; placeholder 0 phải đi cùng `mask=0`.
 
 ## Chuẩn bị từ log game
 
@@ -116,16 +144,29 @@ Nếu thiếu scikit-learn hoặc PyTorch, script vẫn chạy model khả dụn
 python -m unittest discover -s tests -v
 ```
 
+## Phạm vi nghiên cứu v2
+
+- Bắt buộc: cross-map/cross-patch và missing-feature robustness.
+- Tùy chọn: cross-genre exploratory với một mini-game thứ hai và adapter riêng.
+- Future work: contextual bandit/CQL và online backbone fine-tuning.
+
+Chi tiết xem tại `docs/feasibility_and_scope_v2.md` và `docs/implementation_v2.md`.
+
 ## Cấu trúc
 
 ```text
 src/ddamodels/
   data.py       # ingest, validate, feature/window building
-  models.py     # logistic, RF, candidate-conditioned GRU
+  canonical.py  # canonical signals, availability mask, relative normalization
+  models.py     # logistic, RF, candidate-conditioned và Tokenized FiLM GRU
   train.py      # split, train, metrics, artifacts
+  adaptation.py # causal online calibration
+  controller.py # uncertainty-aware safe controller
 scripts/
   prepare_dataset.py
   train.py
+  train_adaptive.py
 configs/
   difficulty_profiles.json
+  canonical_feature_contract.json
 ```

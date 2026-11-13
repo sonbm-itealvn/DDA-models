@@ -180,6 +180,30 @@ def load_window_dataset(path: str | Path, feature_names: Iterable[str] | None = 
                            list(feature_names or [f"x_{i}" for i in range(histories.shape[-1])]), names)
 
 
+def load_tokenized_window_dataset(path: str | Path):
+    """Load adaptive v2 rows with values, availability mask and difficulty vector.
+
+    Required columns: values_json, mask_json, context_json, difficulty_vector_json,
+    segment_success. `mask_json` is mandatory so missing does not become a fake 0.
+    """
+    raw = _read_any(path)
+    df = raw if isinstance(raw, pd.DataFrame) else pd.DataFrame(raw)
+    required = ["values_json", "mask_json", "context_json", "difficulty_vector_json", "segment_success"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Adaptive dataset missing columns: {missing}")
+    values = np.asarray([_json_or_value(x) for x in df["values_json"]], dtype=np.float32)
+    masks = np.asarray([_json_or_value(x) for x in df["mask_json"]], dtype=np.float32)
+    contexts = np.asarray([_json_or_value(x) for x in df["context_json"]], dtype=np.float32)
+    difficulty = np.asarray([_json_or_value(x) for x in df["difficulty_vector_json"]], dtype=np.float32)
+    y = np.asarray(df["segment_success"], dtype=np.float32)
+    if values.shape != masks.shape or values.ndim != 3:
+        raise ValueError(f"values/mask must both be [N,T,F], got {values.shape}/{masks.shape}")
+    groups_col = "player_id_hash" if "player_id_hash" in df else "session_id"
+    groups = df[groups_col].fillna("unknown").astype(str).to_numpy()
+    return values, masks, contexts, difficulty, y, groups
+
+
 def build_window_rows(snapshot_df: pd.DataFrame, sequence_length: int = 12, stride: int = 3) -> pd.DataFrame:
     """Build only windows with an explicitly available future segment label.
 
