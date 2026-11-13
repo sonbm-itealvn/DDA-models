@@ -184,11 +184,12 @@ def load_tokenized_window_dataset(path: str | Path):
     """Load adaptive v2 rows with values, availability mask and difficulty vector.
 
     Required columns: values_json, mask_json, context_json, difficulty_vector_json,
-    segment_success. `mask_json` is mandatory so missing does not become a fake 0.
+    difficulty_mask_json, segment_success. Both masks are mandatory so missing
+    does not become a fake 0 or an unobserved empirical prior.
     """
     raw = _read_any(path)
     df = raw if isinstance(raw, pd.DataFrame) else pd.DataFrame(raw)
-    required = ["values_json", "mask_json", "context_json", "difficulty_vector_json", "segment_success"]
+    required = ["values_json", "mask_json", "context_json", "difficulty_vector_json", "difficulty_mask_json", "segment_success"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Adaptive dataset missing columns: {missing}")
@@ -196,9 +197,11 @@ def load_tokenized_window_dataset(path: str | Path):
     masks = np.asarray([_json_or_value(x) for x in df["mask_json"]], dtype=np.float32)
     contexts = np.asarray([_json_or_value(x) for x in df["context_json"]], dtype=np.float32)
     difficulty = np.asarray([_json_or_value(x) for x in df["difficulty_vector_json"]], dtype=np.float32)
+    difficulty_mask = np.asarray([_json_or_value(x) for x in df["difficulty_mask_json"]], dtype=np.float32)
     y = np.asarray(df["segment_success"], dtype=np.float32)
-    if values.shape != masks.shape or values.ndim != 3:
+    if values.shape != masks.shape or values.ndim != 3 or difficulty.shape != difficulty_mask.shape:
         raise ValueError(f"values/mask must both be [N,T,F], got {values.shape}/{masks.shape}")
+    difficulty = np.concatenate([difficulty, difficulty_mask], axis=1)
     groups_col = "player_id_hash" if "player_id_hash" in df else "session_id"
     groups = df[groups_col].fillna("unknown").astype(str).to_numpy()
     return values, masks, contexts, difficulty, y, groups

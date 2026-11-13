@@ -20,7 +20,7 @@ class AdaptiveComponentTests(unittest.TestCase):
         self.assertEqual(mask[1], 0.0)
 
     def test_calibrator_updates_only_when_called(self):
-        c = OnlineTemperatureCalibrator()
+        c = OnlineTemperatureCalibrator(batch_size=1)
         self.assertEqual(c.updates, 0)
         c.update(.9, 0)
         self.assertEqual(c.updates, 1)

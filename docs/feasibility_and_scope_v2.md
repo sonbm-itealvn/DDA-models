@@ -38,9 +38,9 @@ Bậc 3: khác mini-game, exploratory transfer
 | F cố định và missing feature | Tokenization + mask + temporal backbone | Trung bình–cao | Triển khai bản nhỏ, so với baseline |
 | Difficulty vector 5 số | Relative perturbation + empirical prior | Cao | Triển khai ngay |
 | FiLM conditioning | Điều biến hidden state bằng difficulty | Trung bình | Triển khai trong model nâng cấp |
-| Map/patch shift | Running/session-relative normalization | Cao | Triển khai ngay |
+| Map/patch shift | Bounded-aware causal shrinkage normalization | Cao | Triển khai ngay |
 | Transfer learning | Frozen backbone + lightweight adapter | Trung bình | Chỉ làm few-shot, không cam kết zero-shot |
-| Online temperature scaling | Cập nhật calibrator, không cập nhật backbone | Cao | Triển khai an toàn |
+| Online temperature scaling | Batch Bayesian/MAP update, không cập nhật từng wave | Cao | Triển khai an toàn |
 | Residual/LoRA adapter | Fine-tune online | Trung bình–thấp | Offline pilot trước, không cập nhật tự do trong trận |
 | Contextual bandit | Controller học policy | Trung bình–thấp | Không dùng làm controller chính trong MVP |
 | Offline RL/CQL | Học policy từ log | Thấp với dataset hiện tại | Để future work |
@@ -139,7 +139,15 @@ empirical_prior     # success prior lịch sử của candidate
 candidate_mask      # candidate có hợp lệ không
 ```
 
-`pressure_delta` và các thành phần khác do game adapter chuẩn hóa. Controller chỉ được xét candidate mà actuator đã kiểm tra playability.
+`pressure_delta` và các thành phần khác phải dùng contract cố định:
+
+```text
+delta = clip(log(param_candidate / param_current) / log(max_step_ratio), -1, 1)
+```
+
+Chỉ áp dụng cho tham số dương. Adapter phải công bố `max_step_ratio`, đơn vị và mapping; không cho phép mỗi game tự chọn scale tùy ý. Controller chỉ được xét candidate mà actuator đã kiểm tra playability.
+
+`empirical_prior` chỉ được bật khi tính từ fixed-difficulty randomized data trong cùng domain/patch. Với zero-shot map/patch, giá trị được mask bằng 0; không được coi đây là prior quan sát được.
 
 ## 6. Model v2
 
@@ -185,28 +193,31 @@ Nếu tokenized model không vượt baseline trong cross-map/cross-patch, giữ
 
 ### 7.1. Session-relative normalization
 
-Dùng baseline trong warm-up hoặc rolling window:
+Dùng baseline trong warm-up hoặc rolling window. Feature có biên tự nhiên không được chuẩn hóa bằng running median/IQR:
 
 ```text
-x_norm = (x - running_median) / (running_iqr + epsilon)
+bounded ratio -> giữ absolute value trong [0,1]
+unbounded unit -> causal shrinkage về game baseline + scale floor
 ```
 
-Hoặc tỷ lệ theo reference:
+Với feature không có biên cố định:
 
 ```text
-x_relative = x / (reference_value + epsilon)
+mu_t = (n0 * mu_game + sum_previous_x) / (n0 + t)
+sigma_t = max(sigma_min, shrunk_scale_t)
+x_norm = clip((x - mu_t) / sigma_t, -8, 8)
 ```
 
 Không cập nhật thống kê bằng label tương lai. Trong 30 giây đầu, dùng profile baseline của game nếu chưa đủ warm-up.
 
 ### 7.2. Online calibration
 
-Cho phép cập nhật temperature/platt calibrator bằng outcome đã quan sát ở các segment trước. Không cập nhật backbone trong trận chính.
+Cho phép cập nhật temperature/platt calibrator bằng batch outcome đã quan sát. Không cập nhật backbone trong trận chính. Temperature phải có prior và bounds, ví dụ `T in [0.7, 2.0]`, cập nhật sau 20–30 segment cùng patch/domain.
 
 Quy tắc:
 
 ```text
-calibrator update -> được phép sau segment finish
+calibrator update -> chỉ sau batch đủ lớn, không sau từng wave
 backbone update   -> chỉ offline/few-shot pilot
 controller update -> bị safety gate giới hạn
 ```

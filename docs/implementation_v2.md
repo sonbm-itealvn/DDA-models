@@ -7,9 +7,10 @@ Bản v2 không tuyên bố một model duy nhất chạy nguyên xi cho mọi g
 ### Mô-đun đã có trong repository
 
 - `canonical.py`: canonical signals, availability mask, session-relative normalization.
-- `models.py`: `TokenizedFiLMGRU`, bên cạnh baseline và Candidate-Conditioned GRU cũ.
-- `adaptation.py`: online temperature calibration causal.
+- `models.py`: gated weighted Tokenized FiLM GRU với tensor tĩnh, bên cạnh baseline và Candidate-Conditioned GRU cũ.
+- `adaptation.py`: batch MAP temperature calibration causal, bounds `[0.7, 2.0]`.
 - `controller.py`: uncertainty-aware scoring + cooldown/hysteresis/safety gate.
+- `segments.py`: event-bounded/fixed-horizon segment contract.
 - `train_adaptive.py`: train model tokenized từ `values_json`, `mask_json`, `difficulty_vector_json`.
 - `canonical_feature_contract.json`: semantic IDs và difficulty contract.
 
@@ -18,15 +19,24 @@ Bản v2 không tuyên bố một model duy nhất chạy nguyên xi cho mọi g
 Một row adaptive cần:
 
 ```text
-values_json              # [T, 19] canonical values
-mask_json                # [T, 19], 1=available, 0=missing
+values_json              # [T, 21] canonical values
+mask_json                # [T, 21], 1=available, 0=missing
 context_json             # context đã canonical hóa
- difficulty_vector_json  # [5]: relative_step, pressure_delta, forgiveness_delta, resource_delta, empirical_prior
+difficulty_vector_json   # [5]: relative_step, pressure_delta, forgiveness_delta, resource_delta, empirical_prior
+difficulty_mask_json     # [5], prior chỉ available từ fixed randomized same domain/patch
 segment_success          # label tương lai
 player_id_hash/session_id
 ```
 
-Giá trị missing có thể là placeholder 0 trong tensor, nhưng `mask_json` bắt buộc phải ghi 0. Model không được hiểu missing là giá trị 0 thực.
+Giá trị missing có thể là placeholder 0 trong tensor, nhưng `mask_json` và `difficulty_mask_json` bắt buộc phải ghi 0. Model không được hiểu missing là giá trị 0 thực.
+
+Feature bounded `[0,1]` giữ nguyên giá trị tuyệt đối. Feature không bounded dùng causal shrinkage về game baseline, `sigma_min` và clip `[-8,8]`; không dùng IQR với denominator gần 0.
+
+Difficulty delta dùng công thức bắt buộc:
+
+```text
+clip(log(candidate/current) / log(max_step_ratio), -1, 1)
+```
 
 ## Quy trình train v2
 
@@ -49,7 +59,8 @@ TokenizedFiLMGRU + feature dropout evaluation
 ## Causal adaptation
 
 - warm-up/session-relative statistics chỉ dùng quan sát trước hiện tại;
-- temperature calibrator chỉ update sau khi segment kết thúc;
+- temperature calibrator chỉ buffer outcome sau khi segment kết thúc và chỉ update sau batch 20–30 segment cùng patch/domain;
+- empirical prior chỉ lấy từ fixed randomized data, zero-shot phải mask prior;
 - không update backbone trong trận chính;
 - adapter few-shot phải fit trên pilot session, test session giữ độc lập;
 - nếu uncertainty cao, controller HOLD.
@@ -85,5 +96,16 @@ Model v2 chỉ được xem là có giá trị nếu ít nhất một trong các
 - false increase rate thấp hơn khi feature dropout;
 - uncertainty tăng khi thiếu feature và safety gate giảm hành động rủi ro;
 - completion/quit/fairness cải thiện trong online pilot.
+
+## Segment contract
+
+Adapter phải khai báo một trong hai mode:
+
+```text
+event_bounded: wave/room/checkpoint, semantics 30–60 giây
+fixed_horizon: game liên tục, survive_window theo 30 giây hoặc horizon đã định nghĩa
+```
+
+Không so sánh trực tiếp segment 15 giây của một game với segment 90 giây của game khác nếu chưa chuẩn hóa horizon và label definition.
 
 Không dùng accuracy hoặc completion rate đơn độc để tuyên bố thành công.

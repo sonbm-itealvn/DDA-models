@@ -68,10 +68,11 @@ Nếu `candidate_difficulty` là số nguyên, pipeline tự chuyển thành dif
 Model `TokenizedFiLMGRU` nhận dataset có:
 
 ```text
-values_json              # [T, 19] canonical values
-mask_json                # [T, 19], 1=available, 0=missing
+values_json              # [T, 21] canonical values
+mask_json                # [T, 21], 1=available, 0=missing
 context_json             # vector context
 difficulty_vector_json   # [relative_step, pressure_delta, forgiveness_delta, resource_delta, empirical_prior]
+difficulty_mask_json     # availability mask; empirical_prior=0 when unavailable is not equivalent to observed 0
 segment_success          # 0/1
 ```
 

@@ -1,28 +1,38 @@
 {
-  "version": "canonical-v1",
+  "version": "canonical-v2",
   "missing_policy": "zero_placeholder_plus_availability_mask",
+  "normalization": {
+    "bounded_features": "keep_absolute_in_0_1",
+    "unbounded_features": "causal_game_prior_shrinkage",
+    "min_scale": 0.05,
+    "clip": [-8, 8]
+  },
   "features": [
-    {"name": "progress_ratio", "group": "progress_tempo", "range": [0, 1]},
-    {"name": "progress_velocity", "group": "progress_tempo"},
-    {"name": "time_budget_ratio", "group": "progress_tempo"},
-    {"name": "tempo_rate", "group": "progress_tempo"},
-    {"name": "vitality_ratio", "group": "vitality_error", "range": [0, 1]},
-    {"name": "vitality_loss_rate", "group": "vitality_error"},
-    {"name": "critical_error_rate", "group": "vitality_error"},
-    {"name": "failure_cost_ratio", "group": "vitality_error"},
-    {"name": "resource_reserve_ratio", "group": "capability_economy"},
-    {"name": "resource_utilization_rate", "group": "capability_economy"},
-    {"name": "capability_ratio", "group": "capability_economy"},
-    {"name": "threat_pressure_ratio", "group": "capability_economy"},
-    {"name": "action_frequency", "group": "human_cognitive_motor"},
-    {"name": "invalid_action_rate", "group": "human_cognitive_motor", "range": [0, 1]},
-    {"name": "idle_ratio", "group": "human_cognitive_motor", "range": [0, 1]},
-    {"name": "reaction_latency", "group": "human_cognitive_motor"},
-    {"name": "error_slope", "group": "human_cognitive_motor"},
-    {"name": "recent_segment_win_rate", "group": "human_cognitive_motor", "range": [0, 1]},
-    {"name": "efficiency_ratio", "group": "human_cognitive_motor"}
+    {"name": "progress_ratio", "group": "progress_tempo", "bounded": true},
+    {"name": "progress_velocity", "group": "progress_tempo", "bounded": false},
+    {"name": "time_budget_ratio", "group": "progress_tempo", "bounded": true},
+    {"name": "tempo_rate", "group": "progress_tempo", "bounded": false},
+    {"name": "vitality_ratio", "group": "vitality_error", "bounded": true},
+    {"name": "vitality_loss_rate", "group": "vitality_error", "bounded": false},
+    {"name": "critical_error_rate", "group": "vitality_error", "bounded": false},
+    {"name": "failure_cost_ratio", "group": "vitality_error", "bounded": false},
+    {"name": "resource_reserve_ratio", "group": "capability_economy", "bounded": false},
+    {"name": "resource_utilization_rate", "group": "capability_economy", "bounded": false},
+    {"name": "capability_ratio", "group": "capability_economy", "bounded": false},
+    {"name": "threat_pressure_ratio", "group": "capability_economy", "bounded": false},
+    {"name": "action_frequency", "group": "human_cognitive_motor", "bounded": false},
+    {"name": "invalid_action_rate", "group": "human_cognitive_motor", "bounded": true},
+    {"name": "idle_ratio", "group": "human_cognitive_motor", "bounded": true},
+    {"name": "reaction_latency", "group": "human_cognitive_motor", "bounded": false},
+    {"name": "error_slope", "group": "human_cognitive_motor", "bounded": false},
+    {"name": "recent_segment_win_rate", "group": "human_cognitive_motor", "bounded": true},
+    {"name": "recent_average_difficulty", "group": "human_cognitive_motor", "bounded": false},
+    {"name": "difficulty_adjusted_win_rate", "group": "human_cognitive_motor", "bounded": false},
+    {"name": "efficiency_ratio", "group": "human_cognitive_motor", "bounded": false}
   ],
   "difficulty_features": [
     "relative_step", "pressure_delta", "forgiveness_delta", "resource_delta", "empirical_prior"
-  ]
+  ],
+  "difficulty_delta_formula": "clip(log(candidate/current) / log(max_step_ratio), -1, 1)",
+  "empirical_prior_policy": "only fixed_randomized_same_domain; otherwise mask=0"
 }

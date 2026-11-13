@@ -135,6 +135,7 @@ if nn is not None:
             self.feature_embedding = nn.Embedding(feature_count, token_size)
             self.value_net = nn.Sequential(nn.Linear(2, token_size), nn.ReLU())
             self.token_net = nn.Sequential(nn.Linear(token_size, latent_size), nn.ReLU())
+            self.gate_net = nn.Linear(latent_size, 1)
             self.temporal = nn.GRU(latent_size, hidden_size, batch_first=True)
             self.context_net = nn.Sequential(nn.Linear(context_count, 16), nn.ReLU())
             self.difficulty_net = nn.Sequential(nn.Linear(difficulty_count, 32), nn.ReLU())
@@ -150,8 +151,12 @@ if nn is not None:
             vm = torch.stack([values, mask], dim=-1)
             tokens = self.value_net(vm) + emb
             tokens = self.token_net(tokens)
-            denom = mask.sum(dim=-1, keepdim=True).clamp_min(1.0)
-            z = (tokens * mask.unsqueeze(-1)).sum(dim=-2) / denom
+            # Static-shape gated pooling: multiplication by mask avoids -inf/
+            # MaskedFill and is friendlier to FP16 ONNX/Sentis execution.
+            gate_logits = self.gate_net(tokens).squeeze(-1)
+            weights = torch.exp(torch.tanh(gate_logits)) * mask
+            weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1.0)
+            z = (tokens * weights.unsqueeze(-1)).sum(dim=-2)
             _, h = self.temporal(z)
             h = h[-1]
             de = self.difficulty_net(difficulty)
@@ -186,3 +191,16 @@ def train_tokenized_film_gru(values: np.ndarray, masks: np.ndarray, context: np.
             losses.append(float(loss.detach()))
         records.append({"epoch": epoch + 1, "train_loss": float(np.mean(losses))})
     return GRUTrainingResult(model, records)
+
+
+def export_tokenized_onnx(model, output_path: str, sequence_length: int,
+                          feature_count: int, context_count: int, difficulty_count: int = 5) -> None:
+    """Export static-shape model for early Unity Sentis compatibility checks."""
+    if torch is None:
+        raise RuntimeError("PyTorch is required for ONNX export")
+    model.eval()
+    dummy = (torch.zeros(1, sequence_length, feature_count),
+             torch.ones(1, sequence_length, feature_count),
+             torch.zeros(1, context_count), torch.zeros(1, difficulty_count))
+    torch.onnx.export(model, dummy, output_path, input_names=["values", "mask", "context", "difficulty"],
+                      output_names=["logit"], dynamic_axes=None, opset_version=17)
