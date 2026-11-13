@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+artifacts/
+data/raw/
+data/validated/
+data/features/
+*.parquet
+*.jsonl
+*.pt
+*.joblib
+*.onnx
