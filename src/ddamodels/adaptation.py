@@ -28,8 +28,15 @@ class OnlineTemperatureCalibrator:
         return 1 / (1 + np.exp(-np.clip(logits, -40, 40)))
 
     def observe(self, probability: float, outcome: int) -> bool:
-        """Buffer a label; return True only when a calibration update occurred."""
-        self.buffer.append((float(np.clip(probability, 1e-6, 1 - 1e-6)), int(outcome)))
+        """Buffer a label; return True only when a calibration update occurred.
+
+        Stores the logit (inverse sigmoid) directly to avoid numerical
+        imprecision from round-tripping through probability space when
+        p is near 0 or 1.
+        """
+        p = float(np.clip(probability, 1e-6, 1 - 1e-6))
+        logit = float(np.log(p / (1 - p)))
+        self.buffer.append((logit, int(outcome)))
         if len(self.buffer) < self.batch_size:
             return False
         self.update_batch()
@@ -38,9 +45,8 @@ class OnlineTemperatureCalibrator:
     def update_batch(self) -> float:
         if not self.buffer:
             return self.temperature
-        probs = np.asarray([p for p, _ in self.buffer], dtype=float)
+        logits = np.asarray([l for l, _ in self.buffer], dtype=float)
         y = np.asarray([y for _, y in self.buffer], dtype=float)
-        logits = np.log(probs / (1 - probs))
         t = self.temperature
         for _ in range(25):
             q = 1 / (1 + np.exp(-np.clip(logits / t, -40, 40)))

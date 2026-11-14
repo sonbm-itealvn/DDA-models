@@ -16,10 +16,11 @@ CANONICAL_FEATURES = [
 ]
 
 BOUNDED_FEATURES = {
-    "progress_ratio", "vitality_ratio", "time_budget_ratio",
+    "progress_ratio", "vitality_ratio",
     "invalid_action_rate", "idle_ratio", "recent_segment_win_rate",
-    "difficulty_adjusted_win_rate",
 }
+# time_budget_ratio: can exceed 1.0 in overtime; use shrinkage normalization.
+# difficulty_adjusted_win_rate: range [-1, 1] (win_rate - prior); clip(0,1) loses signal.
 
 UNBOUNDED_FEATURES = set(CANONICAL_FEATURES) - BOUNDED_FEATURES
 
@@ -113,7 +114,8 @@ class CausalSessionNormalizer:
                 w = n / (self.prior_weight + n)
                 mu = (1.0 - w) * game_mu + w * session_mu
                 session_var = self.m2.get(name, 0.0) / max(n - 1, 1)
-                scale = max(np.sqrt((1.0 - w) * game_scale ** 2 + w * session_var), self.min_scale)
+                mean_diff_sq = (game_mu - session_mu) ** 2
+                scale = max(np.sqrt((1.0 - w) * game_scale ** 2 + w * session_var + w * (1.0 - w) * mean_diff_sq), self.min_scale)
                 result[name] = float(np.clip((x - mu) / scale, -8.0, 8.0))
             mask[name] = 1.0
         return result, mask

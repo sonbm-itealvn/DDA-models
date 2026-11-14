@@ -10,7 +10,7 @@
   "features": [
     {"name": "progress_ratio", "group": "progress_tempo", "bounded": true},
     {"name": "progress_velocity", "group": "progress_tempo", "bounded": false},
-    {"name": "time_budget_ratio", "group": "progress_tempo", "bounded": true},
+    {"name": "time_budget_ratio", "group": "progress_tempo", "bounded": false},
     {"name": "tempo_rate", "group": "progress_tempo", "bounded": false},
     {"name": "vitality_ratio", "group": "vitality_error", "bounded": true},
     {"name": "vitality_loss_rate", "group": "vitality_error", "bounded": false},

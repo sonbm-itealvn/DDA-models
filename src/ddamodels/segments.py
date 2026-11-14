@@ -30,12 +30,21 @@ class SegmentContract:
 
 
 def segment_boundary(mode: SegmentMode, decision_time: float, horizon_seconds: float,
-                     event_finish_time: float | None = None) -> tuple[float, float]:
-    """Return [start, end] boundary used by feature/label generation."""
+                     event_finish_time: float | None = None,
+                     allow_horizon_fallback: bool = False) -> tuple[float, float]:
+    """Return [start, end] boundary used by feature/label generation.
+
+    Guarantees returning a non-None, strictly finite tuple[float, float].
+    If an event-bounded segment experiences unexpected disconnect/crash
+    (event_finish_time is None), allow_horizon_fallback enables gracefully
+    falling back to decision_time + horizon_seconds instead of raising or returning None.
+    """
     if mode == SegmentMode.EVENT_BOUNDED:
-        if event_finish_time is None or event_finish_time <= decision_time:
-            raise ValueError("event-bounded segment needs a finish event after decision")
-        return decision_time, event_finish_time
+        if event_finish_time is not None and event_finish_time > decision_time:
+            return float(decision_time), float(event_finish_time)
+        if allow_horizon_fallback and horizon_seconds > 0:
+            return float(decision_time), float(decision_time + horizon_seconds)
+        raise ValueError("event-bounded segment needs a valid finish event after decision; session may have disconnected prematurely")
     if horizon_seconds <= 0:
         raise ValueError("fixed horizon must be positive")
-    return decision_time, decision_time + horizon_seconds
+    return float(decision_time), float(decision_time + horizon_seconds)

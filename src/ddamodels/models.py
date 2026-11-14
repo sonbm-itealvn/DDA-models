@@ -129,7 +129,7 @@ def gru_predict(model, history: np.ndarray, context: np.ndarray, candidate: np.n
 if nn is not None:
     class TokenizedFiLMGRU(nn.Module):
         """Masked canonical telemetry encoder with FiLM difficulty conditioning."""
-        def __init__(self, feature_count: int, context_count: int, difficulty_count: int = 5,
+        def __init__(self, feature_count: int, context_count: int, difficulty_count: int = 10,
                      latent_size: int = 64, token_size: int = 32, hidden_size: int = 64):
             super().__init__()
             self.feature_embedding = nn.Embedding(feature_count, token_size)
@@ -155,7 +155,7 @@ if nn is not None:
             # MaskedFill and is friendlier to FP16 ONNX/Sentis execution.
             gate_logits = self.gate_net(tokens).squeeze(-1)
             weights = torch.exp(torch.tanh(gate_logits)) * mask
-            weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1.0)
+            weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
             z = (tokens * weights.unsqueeze(-1)).sum(dim=-2)
             _, h = self.temporal(z)
             h = h[-1]
@@ -194,8 +194,13 @@ def train_tokenized_film_gru(values: np.ndarray, masks: np.ndarray, context: np.
 
 
 def export_tokenized_onnx(model, output_path: str, sequence_length: int,
-                          feature_count: int, context_count: int, difficulty_count: int = 5) -> None:
-    """Export static-shape model for early Unity Sentis compatibility checks."""
+                          feature_count: int, context_count: int, difficulty_count: int = 10) -> None:
+    """Export static-shape model for early Unity Sentis compatibility checks.
+
+    difficulty_count defaults to 10 (5 values + 5 mask) to match the v2
+    data pipeline which concatenates difficulty values and their availability
+    mask into a single tensor.
+    """
     if torch is None:
         raise RuntimeError("PyTorch is required for ONNX export")
     model.eval()
@@ -204,3 +209,68 @@ def export_tokenized_onnx(model, output_path: str, sequence_length: int,
              torch.zeros(1, context_count), torch.zeros(1, difficulty_count))
     torch.onnx.export(model, dummy, output_path, input_names=["values", "mask", "context", "difficulty"],
                       output_names=["logit"], dynamic_axes=None, opset_version=17)
+
+def estimate_mask_uncertainty(mask, base_uncertainty: float = 0.05) -> float:
+    """Estimate epistemic uncertainty from feature availability mask using group weighting.
+
+    Instead of a flat average over all 21 features (which would under-penalize
+    losing a small core group like vitality_error and over-penalize early-game
+    unobserved historical stats), this calculates coverage across the 4 canonical
+    business groups (progress, vitality, capability, cognitive-motor) with equal
+    25% weight each.
+
+    Returns a value in [base_uncertainty, 1.0].
+    """
+    m = np.asarray(mask, dtype=float)
+    if m.ndim > 1:
+        # Use average mask across the sequence window
+        m = np.mean(m, axis=tuple(range(m.ndim - 1)))
+    
+    if len(m) == 21:
+        # Canonical groups:
+        # [0..3]: progress_tempo (4 features)
+        # [4..7]: vitality_error (4 features)
+        # [8..11]: capability_economy (4 features)
+        # [12..20]: human_cognitive_motor (9 features)
+        c_progress = float(np.mean(m[0:4]))
+        c_vitality = float(np.mean(m[4:8]))
+        c_capability = float(np.mean(m[8:12]))
+        c_motor = float(np.mean(m[12:21]))
+        coverage = 0.25 * c_progress + 0.25 * c_vitality + 0.25 * c_capability + 0.25 * c_motor
+    else:
+        coverage = float(np.mean(m))
+
+    coverage = float(np.clip(coverage, 0.0, 1.0))
+    return float(base_uncertainty + (1.0 - coverage) * (1.0 - base_uncertainty))
+
+
+def estimate_struggle_probability(probabilities: dict,
+                                  current_difficulty: int | None = None,
+                                  recent_win_rate: float | None = None,
+                                  win_rate_available: bool = True) -> float:
+    """Estimate struggle probability from candidate success predictions and performance history.
+
+    This is a principled heuristic struggle estimator:
+    - Uses p(d_current) specifically rather than averaging across all candidate
+      perturbations, avoiding lag when an easier candidate predicts high success.
+    - Explicitly guards against unobserved early-game win rates (when mask=0):
+      if recent_win_rate is missing or marked unavailable, it evaluates struggle
+      strictly from failure probability at current difficulty: 1.0 - p(d_current).
+    """
+    if not probabilities:
+        return 0.0
+
+    if current_difficulty is not None and current_difficulty in probabilities:
+        p_curr = float(probabilities[current_difficulty])
+    else:
+        # Fallback to mean if current_difficulty not specified or not in keys
+        p_curr = sum(float(v) for v in probabilities.values()) / len(probabilities)
+
+    # Early-game guard: if win rate is unavailable or unobserved (mask=0),
+    # evaluate struggle strictly from model prediction at current difficulty.
+    if not win_rate_available or recent_win_rate is None or not np.isfinite(recent_win_rate):
+        struggle = 1.0 - p_curr
+    else:
+        struggle = (1.0 - p_curr) * 0.6 + (1.0 - float(np.clip(recent_win_rate, 0.0, 1.0))) * 0.4
+
+    return float(np.clip(struggle, 0.0, 1.0))

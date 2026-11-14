@@ -11,7 +11,7 @@ import pandas as pd
 BASE_FEATURES = [
     "progress_ratio", "progress_velocity", "hp_ratio", "hp_loss_rate",
     "gold_normalized", "gold_spend_rate", "tower_count", "tower_build_rate",
-    "wave_normalized", "wave_progress_rate", "enemy_alive", "kills_5s",
+    "normalized_segment_index", "wave_progress_rate", "enemy_alive", "kills_5s",
     "hits_taken_5s", "hits_taken_30s", "deaths_30s", "enemy_leaks_30s",
     "action_count_5s", "invalid_action_rate", "idle_ratio_5s",
     "recent_win_rate", "error_slope", "score_ema", "current_difficulty",
@@ -102,6 +102,18 @@ def normalize_snapshot_frame(session: dict[str, Any]) -> pd.DataFrame:
     df["player_id_hash"] = session.get("playerIdHash", "unknown")
     df["segment_id"] = df.get("segmentId", pd.Series([None] * len(df)))
     df["objective_id"] = df.get("objectiveId", pd.Series([None] * len(df)))
+    if "segmentIndex" in df:
+        df["segment_index"] = pd.to_numeric(df["segmentIndex"], errors="coerce")
+    elif "segmentId" in df and df["segment_id"].notna().any():
+        numeric_seg = pd.to_numeric(df["segment_id"], errors="coerce")
+        if numeric_seg.notna().any():
+            df["segment_index"] = numeric_seg
+        else:
+            df["segment_index"] = pd.Series(pd.factorize(df["segment_id"])[0], index=df.index).astype(float)
+    elif "wave" in df:
+        df["segment_index"] = pd.to_numeric(df["wave"], errors="coerce")
+    else:
+        df["segment_index"] = pd.Series(np.nan, index=df.index)
     df["current_difficulty"] = pd.to_numeric(
         df.get("currentDifficulty", df.get("difficultyProfile", np.nan)), errors="coerce"
     )
@@ -119,8 +131,11 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     out["gold_normalized"] = out["gold"] / max(float(out["gold"].quantile(0.99) or 1), eps)
     out["gold_spend_rate"] = (-out["gold"].diff()).clip(lower=0) / dt.replace(0, np.nan)
     out["tower_build_rate"] = out["tower_count"].diff().clip(lower=0) / dt.replace(0, np.nan)
-    max_wave = max(float(out["wave"].max() or 1), 1.0)
-    out["wave_normalized"] = out["wave"] / max_wave
+    seg_series = out["segment_index"] if ("segment_index" in out and out["segment_index"].notna().any()) else out.get("wave", pd.Series([1.0], index=out.index))
+    total_segments = max(float(pd.to_numeric(seg_series, errors="coerce").max() or 1), 1.0)
+    out["normalized_segment_index"] = (pd.to_numeric(seg_series, errors="coerce") / total_segments).clip(0.0, 1.0)
+    # Maintain wave_normalized alias for backwards compatibility with legacy logs
+    out["wave_normalized"] = out["normalized_segment_index"]
     out["wave_progress_rate"] = out["wave"].diff() / dt.replace(0, np.nan)
     out["enemy_alive"] = pd.to_numeric(out.get("enemyAlive", np.nan), errors="coerce")
     out["kills_5s"] = pd.to_numeric(out.get("kills5s", np.nan), errors="coerce")
@@ -224,7 +239,13 @@ def build_window_rows(snapshot_df: pd.DataFrame, sequence_length: int = 12, stri
         g = g.sort_values("elapsed_seconds").reset_index(drop=True)
         for end in range(sequence_length - 1, len(g), stride):
             window = g.iloc[end - sequence_length + 1:end + 1]
-            if window[features].isna().mean().mean() > 0.35:
+            # Distinguish temporal gaps (data quality) from systematic feature
+            # unavailability (handled by mask=0 in canonical models).  Only count
+            # NaN among features that are at least partially present in this window.
+            available_features = [f for f in features if window[f].notna().any()]
+            if len(available_features) < 5:
+                continue
+            if available_features and window[available_features].isna().mean().mean() > 0.35:
                 continue
             last = g.iloc[end]
             rows.append({
@@ -235,7 +256,7 @@ def build_window_rows(snapshot_df: pd.DataFrame, sequence_length: int = 12, stri
                 "current_difficulty": float(last.get("current_difficulty", 0)),
                 "candidate_difficulty": float(last.get("candidate_difficulty", last.get("current_difficulty", 0))),
                 "history_json": json.dumps(window[features].fillna(0).to_numpy().tolist()),
-                "context_json": json.dumps({k: float(last[k]) if pd.notna(last[k]) else 0.0 for k in ["progress_ratio", "wave_normalized", "current_difficulty"] if k in last}),
+                "context_json": json.dumps({k: float(last[k]) if pd.notna(last[k]) else 0.0 for k in ["progress_ratio", "normalized_segment_index", "current_difficulty"] if k in last}),
                 "segment_success": int(last["segment_success"]),
             })
     return pd.DataFrame(rows)
