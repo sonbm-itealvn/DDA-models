@@ -100,7 +100,8 @@ class CausalSessionNormalizer:
     game_mean: Mapping[str, float] = field(default_factory=dict)
     game_scale: Mapping[str, float] = field(default_factory=dict)
     prior_weight: float = 10.0
-    min_scale: float = 0.05
+    min_scale: float = 1e-6
+    min_scale_ratio: float = 0.25
     count: dict[str, int] = field(default_factory=dict)
     mean: dict[str, float] = field(default_factory=dict)
     m2: dict[str, float] = field(default_factory=dict)
@@ -128,7 +129,8 @@ class CausalSessionNormalizer:
                 mu = (1.0 - w) * game_mu + w * session_mu
                 session_var = self.m2.get(name, 0.0) / max(n - 1, 1)
                 mean_diff_sq = (game_mu - session_mu) ** 2
-                scale = max(np.sqrt((1.0 - w) * game_scale ** 2 + w * session_var + w * (1.0 - w) * mean_diff_sq), self.min_scale)
+                raw_scale = np.sqrt((1.0 - w) * game_scale ** 2 + w * session_var + w * (1.0 - w) * mean_diff_sq)
+                scale = max(raw_scale, self.min_scale_ratio * game_scale, self.min_scale)
                 result[name] = float(np.clip((x - mu) / scale, -8.0, 8.0))
             mask[name] = 1.0
         return result, mask

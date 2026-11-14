@@ -8,7 +8,7 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
-from .canonical import CANONICAL_FEATURES
+from .canonical import CANONICAL_FEATURES, CausalSessionNormalizer
 
 BASE_FEATURES = [
     "progress_ratio", "progress_velocity", "hp_ratio", "hp_loss_rate",
@@ -272,6 +272,30 @@ def build_tokenized_window_rows(snapshot_df: pd.DataFrame, sequence_length: int 
                 "segment_success": int(last["segment_success"]),
             })
     return pd.DataFrame(rows)
+
+
+def causal_normalize_canonical_frame(snapshot_df: pd.DataFrame,
+                                    game_mean: dict[str, float] | None = None,
+                                    game_scale: dict[str, float] | None = None) -> pd.DataFrame:
+    """Normalize each session causally: transform current, then update state.
+
+    Missing values remain NaN so ``build_tokenized_window_rows`` emits an
+    explicit availability mask. Unity adapters must reproduce this order.
+    """
+    missing = sorted(set(CANONICAL_FEATURES) - set(snapshot_df.columns))
+    if missing:
+        raise ValueError(f"Canonical frame missing columns: {missing}")
+    out = snapshot_df.copy()
+    ordered = out.sort_values(["session_id", "elapsed_seconds"])
+    for _, group in ordered.groupby("session_id", sort=False):
+        normalizer = CausalSessionNormalizer(game_mean=game_mean or {}, game_scale=game_scale or {})
+        for row_idx in group.index:
+            mapping = {name: out.at[row_idx, name] for name in CANONICAL_FEATURES}
+            normalized, masks = normalizer.transform(mapping)
+            for name in CANONICAL_FEATURES:
+                out.at[row_idx, name] = normalized[name] if masks[name] else np.nan
+            normalizer.update(mapping)
+    return out
 
 
 def build_window_rows(snapshot_df: pd.DataFrame, sequence_length: int = 12, stride: int = 3) -> pd.DataFrame:

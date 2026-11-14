@@ -114,3 +114,12 @@ fixed_horizon: game liên tục, survive_window theo 30 giây hoặc horizon đ�
 Không so sánh trực tiếp segment 15 giây của một game với segment 90 giây của game khác nếu chưa chuẩn hóa horizon và label definition.
 
 Không dùng accuracy hoặc completion rate đơn độc để tuyên bố thành công.
+
+
+## Phụ lục hardening v3
+
+Các mô tả cũ về temperature-only calibration, `nn.GRU`, opset 17 và FiLM `gamma*h+beta` đã được thay bằng implementation hiện tại: affine logit MAP `(beta, bias)`, static unrolled GRU, export opset 15 và FiLM identity-preserving `(1+delta_gamma)*h+beta`.
+
+`data.py` có `causal_normalize_canonical_frame()` để bảo đảm thứ tự transform trước update và giữ NaN/mask; `models.py` có dropout, empirical-prior dropout, feature-group dropout, validation và early stopping; `train_adaptive.py` ghi test metrics gồm failure PR-AUC và Brier decomposition; `controller.py` có input validation, Score direction, `dt_seconds` và `max_difficulty`.
+
+Unit test code-level đã pass trong môi trường không có PyTorch. Neural training, ONNX Runtime parity và Unity Sentis parity vẫn là hạng mục nghiệm thu riêng, không được đánh dấu hoàn tất chỉ từ compile/unit test preprocessing.

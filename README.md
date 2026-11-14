@@ -174,3 +174,17 @@ configs/
   difficulty_profiles.json
   canonical_feature_contract.json
 ```
+
+
+## Trạng thái hardening v3
+
+Bản v3 đã cập nhật pipeline theo audit kiến trúc: affine logit calibration có bias và prior; FiLM identity-preserving; dropout và feature-group dropout trong train; validation/early stopping; static unrolled GRU với ONNX opset 15; causal normalizer có scale floor theo feature; controller fail-safe dùng Score và giới hạn `D_max`; cùng các metrics Brier decomposition, ECE cục bộ và PR-AUC failure.
+
+Chạy kiểm thử:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+python3 -m compileall -q src scripts
+```
+
+Môi trường không có PyTorch vẫn chạy được preprocessing, controller và baseline; train neural/ONNX cần cài dependency trong `requirements.txt`. Không tuyên bố Unity Sentis tương thích trước khi chạy parity test PyTorch–ONNX Runtime–Unity.

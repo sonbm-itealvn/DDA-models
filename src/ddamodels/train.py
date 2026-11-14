@@ -48,24 +48,45 @@ def accuracy(y, p, threshold=.5):
     return float(np.mean((np.asarray(p) >= threshold) == np.asarray(y)))
 
 
-def expected_calibration_error(y, p, bins=10):
+def expected_calibration_error(y, p, bins=10, lower=0.0, upper=1.0):
     y, p = np.asarray(y), np.asarray(p)
     result = 0.0
-    for lo, hi in zip(np.linspace(0, 1, bins, endpoint=False), np.linspace(0, 1, bins + 1)[1:]):
+    for lo, hi in zip(np.linspace(lower, upper, bins, endpoint=False), np.linspace(lower, upper, bins + 1)[1:]):
         mask = (p >= lo) & (p <= hi if hi == 1 else p < hi)
         if mask.any():
             result += mask.mean() * abs(float(y[mask].mean()) - float(p[mask].mean()))
     return float(result)
 
 
+def brier_decomposition(y, p, bins=10) -> dict[str, float]:
+    """Approximate Murphy decomposition: reliability, resolution, uncertainty."""
+    y, p = np.asarray(y, dtype=float), np.asarray(p, dtype=float)
+    mean_y = float(np.mean(y))
+    reliability = resolution = 0.0
+    for lo, hi in zip(np.linspace(0, 1, bins, endpoint=False), np.linspace(0, 1, bins + 1)[1:]):
+        mask = (p >= lo) & (p <= hi if hi == 1 else p < hi)
+        if mask.any():
+            weight = float(mask.mean()); mean_p = float(p[mask].mean()); mean_bin_y = float(y[mask].mean())
+            reliability += weight * (mean_p - mean_bin_y) ** 2
+            resolution += weight * (mean_bin_y - mean_y) ** 2
+    uncertainty = mean_y * (1.0 - mean_y)
+    return {"reliability": float(reliability), "resolution": float(resolution),
+            "uncertainty": float(uncertainty)}
+
+
 def metrics(y, p) -> dict[str, float]:
     out = {"brier": brier(y, p), "log_loss": log_loss(y, p),
-           "accuracy": accuracy(y, p), "ece": expected_calibration_error(y, p)}
+           "accuracy": accuracy(y, p), "ece": expected_calibration_error(y, p),
+           "ece_local_0.6_0.8": expected_calibration_error(y, p, bins=5, lower=.6, upper=.8)}
+    out.update({f"brier_{k}": v for k, v in brier_decomposition(y, p).items()})
     try:
         from sklearn.metrics import roc_auc_score, average_precision_score, balanced_accuracy_score
         if len(np.unique(y)) > 1:
             out["roc_auc"] = float(roc_auc_score(y, p))
-            out["pr_auc"] = float(average_precision_score(y, p))
+            out["pr_auc_success"] = float(average_precision_score(y, p))
+            if len(np.unique(1 - y)) > 1:
+                out["pr_auc_failure"] = float(average_precision_score(1 - y, 1 - p))
+                out["pr_auc"] = out["pr_auc_failure"]
             out["balanced_accuracy"] = float(balanced_accuracy_score(y, p >= .5))
     except ImportError:
         pass
