@@ -8,9 +8,10 @@ Bản v2 không tuyên bố một model duy nhất chạy nguyên xi cho mọi g
 
 - `canonical.py`: canonical signals, availability mask, session-relative normalization.
 - `models.py`: gated weighted Tokenized FiLM GRU với tensor tĩnh, bên cạnh baseline và Candidate-Conditioned GRU cũ.
-- `adaptation.py`: batch MAP temperature calibration causal, bounds `[0.7, 2.0]`.
+- `adaptation.py`: batch MAP temperature calibration causal, bounds `[0.7, 2.0]`, sliding window.
 - `controller.py`: uncertainty-aware scoring + cooldown/hysteresis/safety gate.
 - `segments.py`: event-bounded/fixed-horizon segment contract.
+- `data.py`: `build_tokenized_window_rows()` tạo trực tiếp rows v2 từ canonical frame; `load_tokenized_window_dataset()` kiểm tra và nạp các mask.
 - `train_adaptive.py`: train model tokenized từ `values_json`, `mask_json`, `difficulty_vector_json`.
 - `canonical_feature_contract.json`: semantic IDs và difficulty contract.
 
@@ -38,6 +39,8 @@ Difficulty delta dùng công thức bắt buộc:
 clip(log(candidate/current) / log(max_step_ratio), -1, 1)
 ```
 
+Khi train, `empirical_prior` được mask-dropout mặc định 35% để model học được cả đường có prior và cold-start không có prior.
+
 ## Quy trình train v2
 
 ```bash
@@ -55,6 +58,8 @@ Fixed-vector GRU
 TokenizedFiLMGRU
 TokenizedFiLMGRU + feature dropout evaluation
 ```
+
+FiLM đặt **sau GRU**: history được mã hóa một lần, sau đó ba candidate `{-1,0,+1}` chỉ chạy qua nhánh FiLM/head nhẹ.
 
 ## Causal adaptation
 

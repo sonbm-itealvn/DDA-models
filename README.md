@@ -87,6 +87,8 @@ python scripts/train_adaptive.py \
 
 Missing feature không được coi là giá trị 0 thực; placeholder 0 phải đi cùng `mask=0`.
 
+Trong training, empirical prior được mask-dropout mặc định 35% để mô hình học được cả chế độ có prior và cold-start zero-shot. Temperature calibration dùng sliding window và chỉ cập nhật sau batch mới đủ lớn.
+
 ## Chuẩn bị từ log game
 
 ```bash
@@ -163,6 +165,7 @@ src/ddamodels/
   train.py      # split, train, metrics, artifacts
   adaptation.py # causal online calibration
   controller.py # uncertainty-aware safe controller
+  segments.py   # event-bounded/fixed-horizon segment contract
 scripts/
   prepare_dataset.py
   train.py

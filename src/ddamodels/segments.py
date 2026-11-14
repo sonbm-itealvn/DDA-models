@@ -32,13 +32,7 @@ class SegmentContract:
 def segment_boundary(mode: SegmentMode, decision_time: float, horizon_seconds: float,
                      event_finish_time: float | None = None,
                      allow_horizon_fallback: bool = False) -> tuple[float, float]:
-    """Return [start, end] boundary used by feature/label generation.
-
-    Guarantees returning a non-None, strictly finite tuple[float, float].
-    If an event-bounded segment experiences unexpected disconnect/crash
-    (event_finish_time is None), allow_horizon_fallback enables gracefully
-    falling back to decision_time + horizon_seconds instead of raising or returning None.
-    """
+    """Return a finite [start, end] boundary used by feature/label generation."""
     if mode == SegmentMode.EVENT_BOUNDED:
         if event_finish_time is not None and event_finish_time > decision_time:
             return float(decision_time), float(event_finish_time)
@@ -48,3 +42,12 @@ def segment_boundary(mode: SegmentMode, decision_time: float, horizon_seconds: f
     if horizon_seconds <= 0:
         raise ValueError("fixed horizon must be positive")
     return float(decision_time), float(decision_time + horizon_seconds)
+
+
+def close_fixed_horizon_segment(decision_time: float, horizon_seconds: float,
+                                terminal_time: float | None = None) -> tuple[float, float, bool]:
+    """Close early on death/quit; return (start, end, terminal_failure)."""
+    end = decision_time + horizon_seconds
+    if terminal_time is not None and decision_time < terminal_time < end:
+        return decision_time, terminal_time, True
+    return decision_time, end, False

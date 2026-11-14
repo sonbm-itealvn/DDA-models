@@ -215,7 +215,7 @@ sequenceDiagram
 flowchart LR
     A["Raw Session Logs<br/>(JSON / Parquet)"] --> B["normalize_snapshot_frame()<br/>+ add_derived_features()<br/>normalized_segment_index"]
     B --> C["build_window_rows()<br/>Sequence: 12 snapshots x 5s<br/>Filter: Temporal Gap <= 35%"]
-    C --> D["load_tokenized_window_dataset()<br/>Values [N, 12, 21], Mask [N, 12, 21]<br/>Difficulty [N, 10], Labels [N]"]
+    C --> D["build_tokenized_window_rows()<br/>+ load_tokenized_window_dataset()<br/>Values [N, 12, 21], Mask [N, 12, 21]<br/>Difficulty [N, 10], Labels [N]"]
     D --> E["group_split()<br/>Player-disjoint Split<br/>(Train 70%, Val 15%, Test 15%)"]
     E --> F["train_tokenized_film_gru()<br/>BCEWithLogitsLoss, Adam<br/>Static-Shape Graph"]
     F --> G["Evaluation & Hardening<br/>Brier, ECE, PR-AUC<br/>Feature Dropout Robustness"]
@@ -433,12 +433,12 @@ flowchart TD
     
     Optimize --> Loss["Mục tiêu: NLL(Likelihood) + Quadratic Prior<br/>Prior: λ_prior * (T - T_base)"]
     Loss --> Clamp["Chặn nghiêm ngặt khoảng tin cậy:<br/>T_new = clip(T, min=0.7, max=2.0)"]
-    Clamp --> Clear["Cập nhật T = T_new<br/>Làm rỗng Buffer<br/>Tăng biến đếm updates"]
+    Clamp --> Clear["Cập nhật T = T_new<br/>Giữ sliding window 60 mẫu gần nhất<br/>Reset cadence 20 mẫu mới<br/>Tăng biến đếm updates"]
 ```
 
 #### Các nguyên tắc an toàn cốt lõi:
 - **Lưu trữ trực tiếp Logit**: Buffer lưu cặp `(logit, outcome)` thay vì `(probability, outcome)`. Điều này loại bỏ hoàn toàn việc tính toán nghịch đảo hàm sigmoid $\ln(p / (1-p))$ trong vòng lặp tối ưu, ngăn ngừa lỗi mất độ chính xác số học khi $p \to 0$ hoặc $p \to 1$.
-- **Cập nhật theo lô (Batch, Not Per-Wave)**: Kích thước mẻ mặc định 20 kết quả phân đoạn.
+- **Cập nhật theo lô (Batch, Not Per-Wave)**: Mỗi 20 kết quả mới kích hoạt một update; tối ưu trên sliding window tối đa 60 kết quả gần nhất.
 - **Tiên nghiệm co cụm bậc hai (Quadratic MAP Prior)**: Thành phần phạt $\frac{1}{2} \lambda_{\text{prior}} (T - T_{\text{base}})^2$ luôn kéo $T$ về lại giá trị chuẩn $1.0$.
 - **Biên giới hạn cứng**: Nhiệt độ chỉ được phép dao động trong đoạn $[0.7, 2.0]$.
 

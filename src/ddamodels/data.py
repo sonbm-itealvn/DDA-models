@@ -8,6 +8,8 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from .canonical import CANONICAL_FEATURES
+
 BASE_FEATURES = [
     "progress_ratio", "progress_velocity", "hp_ratio", "hp_loss_rate",
     "gold_normalized", "gold_spend_rate", "tower_count", "tower_build_rate",
@@ -210,7 +212,12 @@ def load_tokenized_window_dataset(path: str | Path):
         raise ValueError(f"Adaptive dataset missing columns: {missing}")
     values = np.asarray([_json_or_value(x) for x in df["values_json"]], dtype=np.float32)
     masks = np.asarray([_json_or_value(x) for x in df["mask_json"]], dtype=np.float32)
-    contexts = np.asarray([_json_or_value(x) for x in df["context_json"]], dtype=np.float32)
+    contexts_raw = [_json_or_value(x) for x in df["context_json"]]
+    if contexts_raw and isinstance(contexts_raw[0], dict):
+        context_names = sorted(set().union(*(x.keys() for x in contexts_raw)))
+        contexts = np.asarray([[float(x.get(k, 0.0)) for k in context_names] for x in contexts_raw], dtype=np.float32)
+    else:
+        contexts = np.asarray(contexts_raw, dtype=np.float32)
     difficulty = np.asarray([_json_or_value(x) for x in df["difficulty_vector_json"]], dtype=np.float32)
     difficulty_mask = np.asarray([_json_or_value(x) for x in df["difficulty_mask_json"]], dtype=np.float32)
     y = np.asarray(df["segment_success"], dtype=np.float32)
@@ -220,6 +227,51 @@ def load_tokenized_window_dataset(path: str | Path):
     groups_col = "player_id_hash" if "player_id_hash" in df else "session_id"
     groups = df[groups_col].fillna("unknown").astype(str).to_numpy()
     return values, masks, contexts, difficulty, y, groups
+
+
+def build_tokenized_window_rows(snapshot_df: pd.DataFrame, sequence_length: int = 12,
+                                stride: int = 3) -> pd.DataFrame:
+    """Build v2 rows from an already canonicalized snapshot frame.
+
+    The adapter must provide the 21 canonical columns, causal difficulty values
+    (`difficulty_vector_json`), their availability mask
+    (`difficulty_mask_json`), and a future-aligned `segment_success`. This
+    function never infers a difficulty prior or a match-level outcome.
+    """
+    required = set(CANONICAL_FEATURES) | {
+        "session_id", "elapsed_seconds", "segment_success",
+        "difficulty_vector_json", "difficulty_mask_json",
+    }
+    missing = sorted(required - set(snapshot_df.columns))
+    if missing:
+        raise ValueError(f"Canonical v2 frame missing columns: {missing}")
+    rows = []
+    for sid, group in snapshot_df.groupby("session_id", sort=False):
+        g = group.sort_values("elapsed_seconds").reset_index(drop=True)
+        for end in range(sequence_length - 1, len(g), stride):
+            window = g.iloc[end - sequence_length + 1:end + 1]
+            values = window[CANONICAL_FEATURES].to_numpy(dtype=np.float32, na_value=np.nan)
+            mask = np.isfinite(values).astype(np.float32)
+            values = np.nan_to_num(values, nan=0.0)
+            if float(mask.mean()) == 0.0:
+                continue
+            last = g.iloc[end]
+            context = {k: float(last[k]) if pd.notna(last[k]) else 0.0
+                       for k in ("progress_ratio", "normalized_segment_index", "current_difficulty")
+                       if k in g.columns}
+            rows.append({
+                "session_id": sid,
+                "player_id_hash": last.get("player_id_hash", "unknown"),
+                "decision_time": float(last["elapsed_seconds"]),
+                "segment_id": last.get("segment_id"),
+                "values_json": json.dumps(values.tolist()),
+                "mask_json": json.dumps(mask.tolist()),
+                "context_json": json.dumps(context),
+                "difficulty_vector_json": last["difficulty_vector_json"],
+                "difficulty_mask_json": last["difficulty_mask_json"],
+                "segment_success": int(last["segment_success"]),
+            })
+    return pd.DataFrame(rows)
 
 
 def build_window_rows(snapshot_df: pd.DataFrame, sequence_length: int = 12, stride: int = 3) -> pd.DataFrame:

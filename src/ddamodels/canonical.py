@@ -22,6 +22,16 @@ BOUNDED_FEATURES = {
 # time_budget_ratio: can exceed 1.0 in overtime; use shrinkage normalization.
 # difficulty_adjusted_win_rate: range [-1, 1] (win_rate - prior); clip(0,1) loses signal.
 
+FEATURE_RANGES = {
+    "progress_ratio": (0.0, 1.0),
+    "vitality_ratio": (0.0, 1.0),
+    "time_budget_ratio": (0.0, 2.0),
+    "invalid_action_rate": (0.0, 1.0),
+    "idle_ratio": (0.0, 1.0),
+    "recent_segment_win_rate": (0.0, 1.0),
+    "difficulty_adjusted_win_rate": (-1.0, 1.0),
+}
+
 UNBOUNDED_FEATURES = set(CANONICAL_FEATURES) - BOUNDED_FEATURES
 
 
@@ -51,9 +61,11 @@ def canonicalize(mapping: Mapping[str, float | None], available: Mapping[str, bo
 def normalized_log_ratio_delta(candidate: float, current: float, max_step_ratio: float,
                                min_value: float = 1e-6) -> float:
     """Normalize a positive parameter change to [-1, 1] with a fixed contract."""
-    if candidate <= 0 or current <= 0 or max_step_ratio <= 1:
-        raise ValueError("candidate/current must be positive and max_step_ratio > 1")
-    raw = np.log(max(candidate, min_value) / max(current, min_value)) / np.log(max_step_ratio)
+    if max_step_ratio <= 1.0 + min_value:
+        raise ValueError("max_step_ratio must be greater than 1 + epsilon")
+    safe_candidate = max(float(candidate), min_value)
+    safe_current = max(float(current), min_value)
+    raw = np.log(safe_candidate / safe_current) / np.log(max_step_ratio)
     return float(np.clip(raw, -1.0, 1.0))
 
 
@@ -105,7 +117,8 @@ class CausalSessionNormalizer:
             x = float(raw)
             if name in BOUNDED_FEATURES:
                 # Preserve semantic absolute meaning; only clip to contract range.
-                result[name] = float(np.clip(x, 0.0, 1.0))
+                lo, hi = FEATURE_RANGES[name]
+                result[name] = float(np.clip(x, lo, hi))
             else:
                 n = self.count.get(name, 0)
                 game_mu = float(self.game_mean.get(name, 0.0))

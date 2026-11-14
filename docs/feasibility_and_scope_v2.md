@@ -35,12 +35,12 @@ Bậc 3: khác mini-game, exploratory transfer
 | Vấn đề | Hướng đề xuất | Khả thi | Quyết định |
 |---|---|---:|---|
 | Feature Tower Defense bị khóa cứng | Canonical semantic adapter | Cao | Triển khai ngay |
-| F cố định và missing feature | Tokenization + mask + temporal backbone | Trung bình–cao | Triển khai bản nhỏ, so với baseline |
+| F cố định và missing feature | Tokenization + mask + gated weighted pooling + temporal backbone | Trung bình–cao | Triển khai bản nhỏ, so với baseline |
 | Difficulty vector 5 số | Relative perturbation + empirical prior | Cao | Triển khai ngay |
 | FiLM conditioning | Điều biến hidden state bằng difficulty | Trung bình | Triển khai trong model nâng cấp |
 | Map/patch shift | Bounded-aware causal shrinkage normalization | Cao | Triển khai ngay |
 | Transfer learning | Frozen backbone + lightweight adapter | Trung bình | Chỉ làm few-shot, không cam kết zero-shot |
-| Online temperature scaling | Batch Bayesian/MAP update, không cập nhật từng wave | Cao | Triển khai an toàn |
+| Online temperature scaling | Batch Bayesian/MAP update trên sliding window, không cập nhật từng wave | Cao | Triển khai an toàn |
 | Residual/LoRA adapter | Fine-tune online | Trung bình–thấp | Offline pilot trước, không cập nhật tự do trong trận |
 | Contextual bandit | Controller học policy | Trung bình–thấp | Không dùng làm controller chính trong MVP |
 | Offline RL/CQL | Học policy từ log | Thấp với dataset hiện tại | Để future work |
@@ -91,7 +91,7 @@ IDifficultyActuator tại safe checkpoint
 |---|---|---|---|
 | `progress_ratio` | `[0,1]` | wave/segment progress | distance, objective completion |
 | `progress_velocity` | ratio/s | tốc độ hoàn thành wave | tốc độ chạy/giải puzzle |
-| `time_budget_ratio` | `[0,1+]` | elapsed/expected duration | timer usage |
+| `time_budget_ratio` | `[0,2]` sau clip | elapsed/expected duration | timer usage |
 | `tempo_rate` | actions/s hoặc event/s | spawn/action tempo | fire rate, input tempo |
 
 ### 4.2. Nhóm Vitality/Error Budget
@@ -159,7 +159,7 @@ Mỗi timestep có các token:
 (feature_embedding_i, normalized_value_i, availability_mask_i)
 ```
 
-Feature encoder dùng masked attention/pooling để tạo latent state `z_t` cố định chiều. Vì vậy model vẫn nhận cùng chiều latent dù game thiếu một số feature.
+Feature encoder dùng gated weighted pooling có trọng số dương và chuẩn hóa theo tổng feature active để tạo latent state `z_t` cố định chiều. Vì vậy model vẫn nhận cùng chiều latent dù game thiếu một số feature; không dùng `MaskedFill(-inf)`.
 
 Điều này không có nghĩa model tự hiểu feature hoàn toàn mới. Feature mới phải có semantic ID nằm trong canonical vocabulary hoặc cần adapter/fine-tune embedding.
 
@@ -173,7 +173,7 @@ beta  = Beta(difficulty)
 h'_t = gamma * h_t + beta
 ```
 
-Sau đó GRU/temporal head dự đoán `p_success`.
+FiLM đặt sau GRU: history chỉ được encode một lần, sau đó mỗi candidate difficulty đi qua nhánh FiLM/head nhẹ. Đây là lựa chọn phù hợp hơn cho Unity/Sentis khi đánh giá `{-1,0,+1}`.
 
 ### 6.3. Baseline vẫn bắt buộc
 

@@ -169,7 +169,8 @@ else:
 
 def train_tokenized_film_gru(values: np.ndarray, masks: np.ndarray, context: np.ndarray,
                              difficulty: np.ndarray, y: np.ndarray, epochs: int = 50,
-                             batch_size: int = 32, lr: float = 1e-3, seed: int = 42) -> GRUTrainingResult:
+                             batch_size: int = 32, lr: float = 1e-3, seed: int = 42,
+                             empirical_prior_dropout: float = 0.35) -> GRUTrainingResult:
     if torch is None or TokenizedFiLMGRU is None:
         raise RuntimeError("PyTorch is required for TokenizedFiLMGRU training. Install requirements.txt")
     torch.manual_seed(seed)
@@ -185,7 +186,14 @@ def train_tokenized_film_gru(values: np.ndarray, masks: np.ndarray, context: np.
         for start in range(0, len(order), batch_size):
             ix = order[start:start + batch_size]
             opt.zero_grad()
-            logits = model(tensors[0][ix], tensors[1][ix], tensors[2][ix], tensors[3][ix])
+            difficulty_batch = tensors[3][ix].clone()
+            # Difficulty is packed as [five values, five availability bits].
+            # Drop only empirical_prior so the network learns the cold-start path.
+            if difficulty_batch.shape[-1] >= 10 and empirical_prior_dropout > 0:
+                drop = torch.rand(len(ix)) < empirical_prior_dropout
+                difficulty_batch[drop, 4] = 0.0
+                difficulty_batch[drop, 9] = 0.0
+            logits = model(tensors[0][ix], tensors[1][ix], tensors[2][ix], difficulty_batch)
             loss = loss_fn(logits, tensors[4][ix])
             loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step()
             losses.append(float(loss.detach()))
