@@ -61,7 +61,7 @@ Nguyên tắc biên soạn: **mỗi khẳng định kỹ thuật phải truy v�
 | $\mathcal{U}$, coverage | Bất định theo độ phủ đầu vào, độ phủ nhóm | xem §5.4 |
 | $\kappa$ | `prior_weight` của normalizer | $10.0$ **[Đã kiểm chứng trong mã]** |
 
-Mã nguồn dùng $T$ cho cả độ dài chuỗi và nhiệt độ. Tài liệu này theo `report.md`: $L$ cho độ dài chuỗi, $\tau$ cho nhiệt độ.
+Mã nguồn hiện đã được đồng bộ chuẩn hóa: hỗ trợ cả $L$ (`sequence_length` / `L`) cho độ dài chuỗi cửa sổ và $\tau$ (`tau` / `temperature`) cho nhiệt độ hiệu chuẩn, thống nhất hoàn toàn với tài liệu lý thuyết `report.md`.
 
 ### 0.4. Nhật ký hiệu chỉnh của bản kiến trúc này
 

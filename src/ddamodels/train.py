@@ -94,15 +94,15 @@ def metrics(y, p) -> dict[str, float]:
 
 
 def _fit_temperature(y, logits, grid=None):
-    """Small validation-only temperature search; avoids test leakage."""
+    """Small validation-only temperature (tau) search; avoids test leakage."""
     grid = grid or np.linspace(.25, 4.0, 32)
-    best_t, best = 1.0, float("inf")
-    for t in grid:
-        p = 1 / (1 + np.exp(-np.clip(logits / t, -40, 40)))
+    best_tau, best = 1.0, float("inf")
+    for tau in grid:
+        p = 1 / (1 + np.exp(-np.clip(logits / tau, -40, 40)))
         score = log_loss(y, p)
         if score < best:
-            best, best_t = score, float(t)
-    return best_t
+            best, best_tau = score, float(tau)
+    return best_tau
 
 
 def run_training(dataset_path: str | Path, output_dir: str | Path, epochs: int = 50, seed: int = 42) -> dict[str, Any]:
@@ -154,7 +154,7 @@ def run_training(dataset_path: str | Path, output_dir: str | Path, epochs: int =
 
     contract = {"history_shape": list(ds.history.shape[1:]), "context_names": ds.context_names,
                 "feature_names": ds.feature_names, "candidate_shape": list(ds.candidate.shape[1:]),
-                "sequence_length": int(ds.history.shape[1]), "seed": seed}
+                "sequence_length": int(ds.history.shape[1]), "L": int(ds.history.shape[1]), "seed": seed}
     (outdir / "feature_contract.json").write_text(json.dumps(contract, indent=2), encoding="utf-8")
     (outdir / "metrics.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
     return results

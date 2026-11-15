@@ -105,7 +105,8 @@ class _StaticGRU(nn.Module if nn is not None else object):
     """A fixed-length GRU using only Linear/Sigmoid/Tanh/Mul/Add nodes.
 
     Unlike nn.GRU, this exports without an ONNX GRU operator. The loop is over
-    a Python-known sequence length and is therefore unrolled by torch tracing.
+    a Python-known sequence length L (default L=12, covering 60s) and is therefore
+    unrolled by torch tracing.
     """
     def __init__(self, input_size: int, hidden_size: int):
         super().__init__()
@@ -114,9 +115,11 @@ class _StaticGRU(nn.Module if nn is not None else object):
         self.hidden_size = hidden_size
 
     def forward(self, x):
-        h = torch.zeros(x.shape[0], self.hidden_size, dtype=x.dtype, device=x.device)
+        # x shape: (B, L, input_size) where L is the sequence length (L=12)
+        b, L, _ = x.shape
+        h = torch.zeros(b, self.hidden_size, dtype=x.dtype, device=x.device)
         outputs = []
-        for step in range(x.shape[1]):
+        for step in range(L):
             i_r, i_z, i_n = self.input_proj(x[:, step]).chunk(3, dim=-1)
             h_r, h_z, h_n = self.hidden_proj(h).chunk(3, dim=-1)
             r = torch.sigmoid(i_r + h_r)
@@ -151,10 +154,11 @@ if nn is not None:
                                       nn.Dropout(dropout), nn.Linear(32, 1))
 
         def forward(self, values, mask, context, difficulty, feature_ids=None):
-            b, _, f = values.shape
+            # values shape: (B, L, F), mask shape: (B, L, F) where L=12, F=21
+            b, L, f = values.shape
             if feature_ids is None:
                 feature_ids = torch.arange(f, device=values.device)
-            emb = self.feature_embedding(feature_ids).view(1, 1, f, -1).expand(b, values.shape[1], f, -1)
+            emb = self.feature_embedding(feature_ids).view(1, 1, f, -1).expand(b, L, f, -1)
             tokens = self.token_net(self.value_net(torch.stack([values, mask], dim=-1)) + emb)
             gates = self.gate_net(tokens).squeeze(-1)
             weights = torch.exp(torch.tanh(gates)) * mask
@@ -250,9 +254,15 @@ def gru_predict(model, history: np.ndarray, context: np.ndarray, candidate: np.n
         return torch.sigmoid(logits).cpu().numpy()
 
 
-def export_tokenized_onnx(model, output_path: str, sequence_length: int,
-                          feature_count: int, context_count: int, difficulty_count: int = 10) -> None:
-    """Export static-shape graph without ONNX GRU, using opset 15."""
+def export_tokenized_onnx(model, output_path: str, sequence_length: int = 12,
+                          feature_count: int = 21, context_count: int = 3, difficulty_count: int = 10,
+                          L: int | None = None) -> None:
+    """Export static-shape graph without ONNX GRU, using opset 15.
+
+    L (or sequence_length): Sequence length (default L=12 snapshots = 60s).
+    """
+    if L is not None:
+        sequence_length = L
     if torch is None:
         raise RuntimeError("PyTorch is required for ONNX export")
     model.eval()

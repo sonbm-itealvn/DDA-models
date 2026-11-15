@@ -181,7 +181,7 @@ def load_window_dataset(path: str | Path, feature_names: Iterable[str] | None = 
         raise ValueError(f"Training dataset missing columns: {missing}")
     histories = np.asarray([_json_or_value(x) for x in df["history_json"]], dtype=np.float32)
     if histories.ndim != 3:
-        raise ValueError(f"history_json must decode to [N,T,F], got {histories.shape}")
+        raise ValueError(f"history_json must decode to [N,L,F] (L=sequence_length, F=feature_count), got {histories.shape}")
     contexts_raw = [_json_or_value(x) for x in df["context_json"]]
     if contexts_raw and isinstance(contexts_raw[0], dict):
         names = sorted(set().union(*(x.keys() for x in contexts_raw)))
@@ -222,7 +222,7 @@ def load_tokenized_window_dataset(path: str | Path):
     difficulty_mask = np.asarray([_json_or_value(x) for x in df["difficulty_mask_json"]], dtype=np.float32)
     y = np.asarray(df["segment_success"], dtype=np.float32)
     if values.shape != masks.shape or values.ndim != 3 or difficulty.shape != difficulty_mask.shape:
-        raise ValueError(f"values/mask must both be [N,T,F], got {values.shape}/{masks.shape}")
+        raise ValueError(f"values/mask must both be [N,L,F] (L=sequence_length, F=feature_count), got {values.shape}/{masks.shape}")
     difficulty = np.concatenate([difficulty, difficulty_mask], axis=1)
     groups_col = "player_id_hash" if "player_id_hash" in df else "session_id"
     groups = df[groups_col].fillna("unknown").astype(str).to_numpy()
@@ -230,14 +230,17 @@ def load_tokenized_window_dataset(path: str | Path):
 
 
 def build_tokenized_window_rows(snapshot_df: pd.DataFrame, sequence_length: int = 12,
-                                stride: int = 3) -> pd.DataFrame:
+                                stride: int = 3, L: int | None = None) -> pd.DataFrame:
     """Build v2 rows from an already canonicalized snapshot frame.
 
+    L (or sequence_length): Sequence length (default L=12 snapshots = 60s).
     The adapter must provide the 21 canonical columns, causal difficulty values
     (`difficulty_vector_json`), their availability mask
     (`difficulty_mask_json`), and a future-aligned `segment_success`. This
     function never infers a difficulty prior or a match-level outcome.
     """
+    if L is not None:
+        sequence_length = L
     required = set(CANONICAL_FEATURES) | {
         "session_id", "elapsed_seconds", "segment_success",
         "difficulty_vector_json", "difficulty_mask_json",
@@ -298,13 +301,17 @@ def causal_normalize_canonical_frame(snapshot_df: pd.DataFrame,
     return out
 
 
-def build_window_rows(snapshot_df: pd.DataFrame, sequence_length: int = 12, stride: int = 3) -> pd.DataFrame:
+def build_window_rows(snapshot_df: pd.DataFrame, sequence_length: int = 12, stride: int = 3,
+                      L: int | None = None) -> pd.DataFrame:
     """Build only windows with an explicitly available future segment label.
 
+    L (or sequence_length): Sequence length (default L=12 snapshots = 60s).
     Expected columns include `segment_success` already aligned to the decision
     point, or `next_segment_success`. The function refuses to infer a session
     result as every window label.
     """
+    if L is not None:
+        sequence_length = L
     if "segment_success" not in snapshot_df.columns:
         raise ValueError("Need segment_success aligned to each decision point; do not infer it from session result")
     features = [x for x in BASE_FEATURES if x in snapshot_df.columns]
